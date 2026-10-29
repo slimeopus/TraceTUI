@@ -10,16 +10,45 @@ venv/
 dist/
 build/
 *.egg-info/
+*.whl
+*.tar.gz
+
+# Coverage
+htmlcov/
+.coverage
+coverage.xml
+*.cover
+.pytest_cache/
+
+# Linters
+.mypy_cache/
+.ruff_cache/
+.pyright_report/
+
+# Secrets & Env
+.env
+.env.*
+*.pem
+*.key
+*.secret
+*.secrets
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*.sublime-*
 
 # OS
 .DS_Store
 Thumbs.db
+*.lnk
 
 # Project
 *.log
+
+# Temporary files
+*.tmp
+*.temp
+~$*

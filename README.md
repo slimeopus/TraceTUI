@@ -2,7 +2,11 @@
 
 **Интерактивный TUI-дебаггер для логов** — красивый консольный интерфейс на базе [Textual](https://textual.io/), который парсит логи (`loguru`, `logging`) в реальном времени, подсвечивает ошибки и позволяет фильтровать их стрелками.
 
-![Preview](et_preview_url.jpeg)
+![Tests](https://github.com/slimeopus/TraceTUI/actions/workflows/tests.yml/badge.svg)
+![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)
+![License](https://img.shields.io/github/license/slimeopus/TraceTUI)
+
+![Preview](Идея.jpeg)
 
 ## ✨ Возможности
 
