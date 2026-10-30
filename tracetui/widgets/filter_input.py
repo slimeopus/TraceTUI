@@ -2,6 +2,7 @@
 
 from textual.screen import ModalScreen
 from textual.widgets import Input, Label
+from textual.containers import Vertical
 from textual.binding import Binding
 
 
@@ -14,19 +15,20 @@ class FilterModal(ModalScreen[str | None]):
     CSS = """
     FilterModal {
         align: center middle;
-        background: $background 70%;
+        background: $surface 70%;
     }
 
-    #filter-input-container {
+    #filter-container {
         width: 60;
-        height: 8;
-        layout: vertical;
+        height: auto;
         padding: 2;
         border: solid $primary;
-        background: $surface;
+        background: $boost;
+        layout: vertical;
+        align: center middle;
     }
 
-    #filter-label {
+    #filter-title {
         text-align: center;
         height: 1;
         text-style: bold;
@@ -41,16 +43,13 @@ class FilterModal(ModalScreen[str | None]):
     }
 
     #filter-input {
+        width: 50;
         height: 3;
         margin-top: 1;
     }
 
-    #filter-input Input--cursor-line {
-        background: $primary 30%;
-    }
-
     #filter-actions {
-        height: 3;
+        height: 2;
         margin-top: 1;
         text-align: center;
         text-style: dim;
@@ -73,14 +72,17 @@ class FilterModal(ModalScreen[str | None]):
 
     def compose(self):
         """Создание интерфейса модального окна."""
-        yield Label("[bold]Фильтрация логов[/]")
-        yield Label("[dim]Введите текст для поиска (Enter — применить, Esc — отмена)[/dim]")
-        yield Input(
-            placeholder="Поиск по сообщению, уровню или метке...",
-            value=self._initial_text,
-            id="filter-input",
-        )
-        yield Label("[dim]Enter: Применить | Esc: Отмена[/dim]")
+        with Vertical(id="filter-container"):
+            yield Label("[bold]Фильтрация логов[/]", id="filter-title")
+            yield Label("[dim]Введите текст для поиска[/dim]", id="filter-hint")
+            yield Input(
+                placeholder="Поиск по сообщению, уровню или метке...",
+                value=self._initial_text,
+                id="filter-input",
+                auto_validate=True,
+                tooltip="Нажмите Enter для применения или Esc для отмены",
+            )
+            yield Label("[dim]Enter: Применить | Esc: Отмена[/dim]", id="filter-actions")
 
     def action_cancel(self) -> None:
         """Отмена фильтрации."""

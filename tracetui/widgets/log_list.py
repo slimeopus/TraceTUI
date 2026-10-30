@@ -2,7 +2,6 @@
 
 from textual.widgets import RichLog
 from textual.binding import Binding
-from textual.message import Message
 
 from ..models import LogEntry, LogLevel, LogSource
 from .filter_input import FilterModal
@@ -10,9 +9,6 @@ from .filter_input import FilterModal
 
 class LogList(RichLog):
     """Центральная панель с потоком логов."""
-
-    class FilterRequested(Message):
-        """Сообщение запроса на открытие модального окна фильтра."""
 
     BINDINGS = [
         Binding("up", "cursor_up", "Up"),
@@ -56,12 +52,15 @@ class LogList(RichLog):
             self._update_display()
             self._safe_notify("Фильтр сброшен")
         else:
-            # Открываем модальное окно для ввода фильтра
-            self.post_message(LogList.FilterRequested())
-
-    def on_filter_requested(self, message: LogList.FilterRequested) -> None:
-        """Обработка запроса на открытие модального окна фильтра."""
-        self.app.push_screen(FilterModal(), self._handle_filter_result)
+            # Открываем модальное окно для ввода фильтра напрямую
+            try:
+                app = self.app
+                # Проверяем, что фильтр уже очищен перед открытием
+                self._filter_text = ""
+                self._safe_notify("Введите текст для фильтрации")
+                app.push_screen(FilterModal(), self._handle_filter_result)
+            except Exception:
+                self._safe_notify("Ошибка: приложение не доступно")
 
     def _handle_filter_result(self, result: str | None) -> None:
         """Обработка результата ввода фильтра из модального окна.
