@@ -310,19 +310,18 @@ class TestLogListSelect:
 class TestLogListFilterMode:
     """Тесты режима фильтрации."""
 
-    def test_toggle_filter_mode_on(self):
-        """Включение режима фильтрации."""
+    def test_toggle_filter_mode_clears_existing_filter(self):
+        """Повторное нажатие F сбрасывает существующий фильтр."""
         log_list = LogList()
-        log_list.action_toggle_filter_mode()
-        assert log_list._filter_mode is True
-
-    def test_toggle_filter_mode_off(self):
-        """Выключение режима фильтрации очищает текст."""
-        log_list = LogList()
-        log_list.action_toggle_filter_mode()
         log_list._filter_text = "test"
         log_list.action_toggle_filter_mode()
-        assert log_list._filter_mode is False
+        assert log_list._filter_text == ""
+
+    def test_toggle_filter_mode_with_active_filter(self):
+        """Если фильтр активен — второе нажатие снимает его."""
+        log_list = LogList()
+        log_list._filter_text = "error"
+        log_list.action_toggle_filter_mode()
         assert log_list._filter_text == ""
 
 

@@ -2,12 +2,17 @@
 
 from textual.widgets import RichLog
 from textual.binding import Binding
+from textual.message import Message
 
 from ..models import LogEntry, LogLevel, LogSource
+from .filter_input import FilterModal
 
 
 class LogList(RichLog):
     """Центральная панель с потоком логов."""
+
+    class FilterRequested(Message):
+        """Сообщение запроса на открытие модального окна фильтра."""
 
     BINDINGS = [
         Binding("up", "cursor_up", "Up"),
@@ -26,7 +31,6 @@ class LogList(RichLog):
         self._filter_level: LogLevel | None = None
         self._filter_text: str = ""
         self._sources: list[LogSource] = []
-        self._filter_mode = False
 
         self._anomaly_keywords = [
             "timeout", "connectionerror", "error", "exception",
@@ -38,6 +42,50 @@ class LogList(RichLog):
 
     def on_mount(self) -> None:
         self.add_class("log-list")
+
+    def action_toggle_filter_mode(self) -> None:
+        """Открыть модальное окно фильтрации.
+
+        Если фильтр уже активен — сбрасывает его и закрывает.
+        Если фильтра нет — открывает модальное окно для ввода.
+        """
+        if self._filter_text:
+            # Если фильтр уже установлен — сбрасываем
+            self._filter_text = ""
+            self._selectedIndex = -1
+            self._update_display()
+            self._safe_notify("Фильтр сброшен")
+        else:
+            # Открываем модальное окно для ввода фильтра
+            self.post_message(LogList.FilterRequested())
+
+    def on_filter_requested(self, message: LogList.FilterRequested) -> None:
+        """Обработка запроса на открытие модального окна фильтра."""
+        self.app.push_screen(FilterModal(), self._handle_filter_result)
+
+    def _handle_filter_result(self, result: str | None) -> None:
+        """Обработка результата ввода фильтра из модального окна.
+
+        Args:
+            result: Введённый текст фильтра. None — отмена по Esc.
+                    Пустая строка — снять фильтр.
+        """
+        if result is None:
+            # Отмена по Esc
+            self._safe_notify("Фильтрация отменена")
+        elif result == "":
+            # Пустая строка — снять фильтр
+            self._filter_text = ""
+            self._selectedIndex = -1
+            self._update_display()
+            self._safe_notify("Фильтр сброшен")
+        else:
+            # Применяем фильтр
+            self._filter_text = result
+            self._selectedIndex = -1
+            self._update_display()
+            filtered_count = len(self._get_filtered_entries())
+            self._safe_notify(f"Фильтр применён: {filtered_count} записей")
 
     def _build_lines(self) -> list[str]:
         """Возвращает строки для отображения (простая строковая логика)."""
@@ -87,8 +135,8 @@ class LogList(RichLog):
 
         lines.append("")
         footer = "F Filter  E Next error  D Tag  ↑↓ Navigate  Enter Select  ←→ Sources"
-        if self._filter_mode:
-            footer = "[bold bright_yellow]FILTER MODE:[/bold bright_yellow] " + footer
+        if self._filter_text:
+            footer = f"[bold bright_yellow]FILTER: '{self._filter_text}'[/bold bright_yellow]  " + footer
         lines.append(f"[dim]{footer}[/dim]")
 
         return lines
@@ -257,19 +305,8 @@ class LogList(RichLog):
     def action_deselect(self) -> None:
         self.selected_index = -1
 
-    def action_toggle_filter_mode(self) -> None:
-        self._filter_mode = not self._filter_mode
-        if not self._filter_mode and self._filter_text:
-            self._filter_text = ""
-            self._selectedIndex = -1
-            self._update_display()
-        elif self._filter_mode:
-            self._selectedIndex = -1
-            self._update_display()
-
     def apply_filter(self, text: str) -> None:
         self._filter_text = text
-        self._filter_mode = False
         self._selectedIndex = -1
         self._update_display()
 
