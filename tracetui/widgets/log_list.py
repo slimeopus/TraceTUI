@@ -236,9 +236,40 @@ class LogList(DataTable):
             self._selectedIndex = max(len(self._filtered_entries) - 1, -1)
 
     def add_entries(self, entries: list[LogEntry]) -> None:
-        """Добавляет новые записи и перестраивает отображение."""
+        """Добавляет новые записи и обновляет отображение.
+
+        Оптимизация: вместо полной очистки и перестройки DataTable,
+        новые строки просто дописываются в конец компонента через add_row().
+        Полный сброс (clear()) происходит только при изменении фильтра
+        логов или смене файла логов (методы _update_display).
+        """
         self._entries.extend(entries)
-        self._update_display()
+
+        # Всегда пересчитываем отфильтрованные записи (нужно для навигации)
+        old_filtered_count = len(self._filtered_entries)
+        self._filtered_entries = self._get_filtered_entries()
+
+        # Если включён любой фильтр — нужна полная перестройка
+        # (появляются/исчезают записи в произвольных местах)
+        if self._filter_level or self._filter_text:
+            self._update_display()
+            return
+
+        # Live-режим без фильтрации: добавляем новые строки в DataTable
+        if not self._columns_added:
+            return
+
+        # Дописываем в DataTable только те записи, которых ещё нет
+        for i, entry in enumerate(self._filtered_entries[old_filtered_count:], start=old_filtered_count):
+            time_str, level_text, message, styles = self._build_line(entry, i)
+            row_key = self.add_row(time_str, level_text, message)
+            # Применяем стили ячеек (уровень, аномалии и т.д.)
+            try:
+                self.set_cell(row_key, 0, style=styles["timestamp"])
+                self.set_cell(row_key, 1, style=styles["level"])
+                self.set_cell(row_key, 2, style=styles["message"])
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Источники
