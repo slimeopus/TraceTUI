@@ -79,7 +79,6 @@ class FilterModal(ModalScreen[str | None]):
                 placeholder="Поиск по сообщению, уровню или метке...",
                 value=self._initial_text,
                 id="filter-input",
-                tooltip="Нажмите Enter для применения или Esc для отмены",
             )
             yield Label("[dim]Enter: Применить | Esc: Отмена[/dim]", id="filter-actions")
 

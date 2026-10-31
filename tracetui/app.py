@@ -45,6 +45,17 @@ class TraceTUIApp(App):
         overflow: auto;
     }
 
+    /* Стили DataTable — виртуализированный рендеринг логов */
+    LogList {
+        background: $boost;
+    }
+
+    LogList .row-selected {
+        background: $primary;
+        color: white;
+        text-style: bold;
+    }
+
     #detail-panel {
         width: 100%;
         height: 95%;

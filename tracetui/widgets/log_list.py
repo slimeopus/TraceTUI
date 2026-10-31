@@ -27,6 +27,9 @@ class LogList(DataTable):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        # Отключаем заголовки DataTable чтобы не было лишних колонок
+        self.show_header = False
+        self.show_cursor = False
         # Храним все записи и отфильтрованные записи отдельно
         self._entries: list[LogEntry] = []
         self._filtered_entries: list[LogEntry] = []
@@ -38,6 +41,8 @@ class LogList(DataTable):
         self._columns_added: bool = False
         # Флаг для тестов: не пересчитывать _filtered_entries
         self._testing: bool = False
+        # Кэш RowKey для выбранной строки — нужен для перерисовки
+        self._selected_row_key = None
 
         # Ключевые слова для детекции аномалий
         self._anomaly_keywords = [
@@ -50,7 +55,8 @@ class LogList(DataTable):
 
     def on_mount(self) -> None:
         self.add_class("log-list")
-        self._ensure_columns()
+        # Столбцы инициализируются лениво через _ensure_columns
+        self.call_after_refresh(self._ensure_columns)
 
     def _ensure_columns(self) -> None:
         """Лениво инициализирует столбцы DataTable (требует контекст приложения)."""
@@ -178,9 +184,13 @@ class LogList(DataTable):
         if not self._columns_added:
             return
 
+        # Сохраняем индекс выбранной строки
+        old_selected_index = self._selectedIndex
+
+        # Очищаем таблицу
         self.clear()
 
-        # Храним RowKey для каждой строки — нужен для стилизации ячеек
+        # Храним RowKey для каждой строки — нужен для стилизации
         row_keys: list = []
 
         # Заполняем таблицу данными
@@ -190,7 +200,8 @@ class LogList(DataTable):
             row_key = self.add_row(time_str, level_text, message)
             row_keys.append(row_key)
 
-        # Применяем стили к ячейкам после добавления всех строк
+        # Применяем стили к ячейкам и выделяем выбранную строку
+        new_selected_row_key = None
         for i, entry in enumerate(self._filtered_entries):
             _, _, _, styles = self._build_line(entry, i)
             row_key = row_keys[i]
@@ -208,12 +219,17 @@ class LogList(DataTable):
             except Exception:
                 pass
 
-            # Выделяем выбранную строку
+            # Сохраняем RowKey для выбранной строки
             if i == self._selectedIndex:
-                try:
-                    self.set_row_key(row_key, classes=["row-selected"])
-                except Exception:
-                    pass
+                new_selected_row_key = row_key
+
+        # Восстанавливаем выбранную строку
+        if new_selected_row_key and old_selected_index >= 0:
+            try:
+                self.select_row(new_selected_row_key)
+                self._selected_row_key = new_selected_row_key
+            except Exception:
+                pass
 
         # Корректируем курсор после перестройки
         if self._selectedIndex >= len(self._filtered_entries):
@@ -300,6 +316,10 @@ class LogList(DataTable):
         filtered = self._filtered_entries
         if value < 0:
             self._selectedIndex = -1
+            try:
+                self.remove_highlight()
+            except Exception:
+                pass
         elif value >= len(filtered):
             self._selectedIndex = len(filtered) - 1
         else:
