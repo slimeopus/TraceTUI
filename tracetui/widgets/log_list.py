@@ -1,14 +1,19 @@
-"""Список логов с цветовой кодировкой и навигацией (центральная панель)."""
+"""Список логов с цветовой кодировкой и навигацией (центральная панель).
 
-from textual.widgets import RichLog
+Полностью переписан с RichLog на DataTable для виртуализации рендеринга.
+DataTable рендерит только видимые строки, что устраняет нагрузку на CPU
+при больших объёмах логов (5000+ строк).
+"""
+
+from textual.widgets import DataTable
 from textual.binding import Binding
 
 from ..models import LogEntry, LogLevel, LogSource
 from .filter_input import FilterModal
 
 
-class LogList(RichLog):
-    """Центральная панель с потоком логов."""
+class LogList(DataTable):
+    """Центральная панель с потоком логов (DataTable с виртуализацией)."""
 
     BINDINGS = [
         Binding("up", "cursor_up", "Up"),
@@ -21,13 +26,18 @@ class LogList(RichLog):
     ]
 
     def __init__(self, **kwargs):
-        super().__init__(markup=True, wrap=True, **kwargs)
+        super().__init__(**kwargs)
+        # Храним все записи и отфильтрованные записи отдельно
         self._entries: list[LogEntry] = []
+        self._filtered_entries: list[LogEntry] = []
         self._selectedIndex: int = -1
         self._filter_level: LogLevel | None = None
         self._filter_text: str = ""
         self._sources: list[LogSource] = []
+        # Флаг для ленивой инициализации столбцов
+        self._columns_added: bool = False
 
+        # Ключевые слова для детекции аномалий
         self._anomaly_keywords = [
             "timeout", "connectionerror", "error", "exception",
             "failure", "fail", "fatal", "critical", "panic",
@@ -38,109 +48,107 @@ class LogList(RichLog):
 
     def on_mount(self) -> None:
         self.add_class("log-list")
+        self._ensure_columns()
 
-    def action_toggle_filter_mode(self) -> None:
-        """Открыть модальное окно фильтрации.
+    def _ensure_columns(self) -> None:
+        """Лениво инициализирует столбцы DataTable (требует контекст приложения)."""
+        if self._columns_added:
+            return
+        try:
+            self.add_columns("timestamp", "level", "message")
+            self._columns_added = True
+        except Exception:
+            # Если контекст приложения ещё не готов — попробуем позже
+            pass
 
-        Если фильтр уже активен — сбрасывает его и закрывает.
-        Если фильтра нет — открывает модальное окно для ввода.
-        """
+    # ------------------------------------------------------------------
+    # Фильтрация
+    # ------------------------------------------------------------------
+
+    def _get_filtered_entries(self) -> list[LogEntry]:
+        """Возвращает отфильтрованные записи по уровню и тексту."""
+        entries = self._entries
+
+        # Фильтр по уровню (показывает текущий уровень и выше)
+        if self._filter_level:
+            level_order = [
+                LogLevel.DEBUG, LogLevel.INFO, LogLevel.WARNING,
+                LogLevel.ERROR, LogLevel.CRITICAL,
+            ]
+            min_idx = level_order.index(self._filter_level)
+            entries = [e for e in entries if level_order.index(e.level) >= min_idx]
+
+        # Фильтр по тексту (ищет в сообщении, уровне, таймстампе)
         if self._filter_text:
-            # Если фильтр уже установлен — сбрасываем
-            self._filter_text = ""
-            self._selectedIndex = -1
-            self._update_display()
-            self._safe_notify("Фильтр сброшен")
-        else:
-            # Открываем модальное окно для ввода фильтра напрямую
-            try:
-                app = self.app
-                # Проверяем, что фильтр уже очищен перед открытием
-                self._filter_text = ""
-                self._safe_notify("Введите текст для фильтрации")
-                app.push_screen(FilterModal(), self._handle_filter_result)
-            except Exception:
-                self._safe_notify("Ошибка: приложение не доступно")
+            text = self._filter_text.lower()
+            entries = [
+                e for e in entries
+                if text in e.message.lower()
+                or text in e.level.value.lower()
+                or text in e.timestamp.lower()
+            ]
 
-    def _handle_filter_result(self, result: str | None) -> None:
-        """Обработка результата ввода фильтра из модального окна.
+        return entries
+
+    def apply_filter(self, text: str) -> None:
+        self._filter_text = text
+        self._selectedIndex = -1
+        self._update_display()
+
+    def set_level_filter(self, level: LogLevel | None) -> None:
+        self._filter_level = level
+        self._selectedIndex = -1
+        self._update_display()
+
+    def set_text_filter(self, text: str) -> None:
+        self._filter_text = text
+        self._selectedIndex = -1
+        self._update_display()
+
+    # ------------------------------------------------------------------
+    # Рендеринг строк (конвертация Rich-разметки в DataTable-стили)
+    # ------------------------------------------------------------------
+
+    def _build_line(self, entry: LogEntry, index: int) -> tuple[str, str, str, dict]:
+        """Формирует строку и стили для DataTable.
 
         Args:
-            result: Введённый текст фильтра. None — отмена по Esc.
-                    Пустая строка — снять фильтр.
+            entry: Запись лога
+            index: Индекс в отфильтрованном списке
+
+        Returns:
+            Кортеж (timestamp, level_text, message, styles_dict)
         """
-        if result is None:
-            # Отмена по Esc
-            self._safe_notify("Фильтрация отменена")
-        elif result == "":
-            # Пустая строка — снять фильтр
-            self._filter_text = ""
-            self._selectedIndex = -1
-            self._update_display()
-            self._safe_notify("Фильтр сброшен")
-        else:
-            # Применяем фильтр
-            self._filter_text = result
-            self._selectedIndex = -1
-            self._update_display()
-            filtered_count = len(self._get_filtered_entries())
-            self._safe_notify(f"Фильтр применён: {filtered_count} записей")
+        is_selected = index == self._selectedIndex
+        is_anomaly = self._is_anomaly(entry)
 
-    def _build_lines(self) -> list[str]:
-        """Возвращает строки для отображения (простая строковая логика)."""
-        entries = self._get_filtered_entries()
-        lines = []
+        # Формируем текст для каждого столбца БЕЗ Rich-разметки
+        time_str = entry.timestamp if entry.timestamp else "    "
+        level_text = f"{entry.level.icon} {entry.level.value}"
+        message = entry.message[:65]
+        if len(entry.message) > 65:
+            message += "..."
 
-        if not entries:
-            return ["[dim]No logs loaded. Open a log file to begin.[/dim]"]
+        # Стили для DataTable (CSS-строки)
+        styles = {}
 
-        anomaly_count = sum(1 for e in entries if self._is_anomaly(e))
-        lines.append(
-            f"[bold]Logs ({len(entries)} entries)[/bold]  |  [bright_red]{anomaly_count} anomalies[/bright_red]"
-        )
-        lines.append("")
+        # Стили для timestamp
+        styles["timestamp"] = "color: grey50;"
 
-        for i, entry in enumerate(entries):
-            if i == self._selectedIndex:
-                prefix = "▸ "
-            else:
-                prefix = "  "
+        # Стили для level
+        styles["level"] = f"color: {entry.level.color};"
 
-            color = entry.level.color
-            icon = entry.level.icon
-            is_anomaly = self._is_anomaly(entry)
+        # Стили для message
+        if is_anomaly and not is_selected:
+            styles["message"] = "color: bright_red;"
+        elif is_selected:
+            # Выбранная строка — белый текст на тёмном фоне (подсветка DataTable)
+            styles["message"] = "color: white;"
 
-            time_str = f"[dim]{entry.timestamp}[/dim]" if entry.timestamp else "[dim]    [/dim]"
-            level_str = f"[{color}]{icon} {entry.level.value:<8}[/]"
-            message = entry.message[:65]
-            if len(entry.message) > 65:
-                message += "..."
-
-            tag_str = ""
-            if entry.tags:
-                tag_parts = [f"[bright_yellow]{t}[/]" for t in entry.tags]
-                tag_str = "  " + " ".join(tag_parts)
-
-            anomaly_marker = " [bright_red]\\[!\\][/]" if is_anomaly else ""
-
-            if is_anomaly and i != self._selectedIndex:
-                line = f"[bright_red]{prefix}{time_str}  {level_str}  {message}{tag_str}{anomaly_marker}[/]"
-            elif is_anomaly and i == self._selectedIndex:
-                line = f"{prefix}{time_str}  {level_str}  {message}{tag_str}{anomaly_marker}"
-            else:
-                line = f"{prefix}{time_str}  {level_str}  {message}{tag_str}"
-
-            lines.append(line)
-
-        lines.append("")
-        footer = "F Filter  E Next error  D Tag  ↑↓ Navigate  Enter Select  ←→ Sources"
-        if self._filter_text:
-            footer = f"[bold bright_yellow]FILTER: '{self._filter_text}'[/bold bright_yellow]  " + footer
-        lines.append(f"[dim]{footer}[/dim]")
-
-        return lines
+        return time_str, level_text, message, styles
 
     def _is_anomaly(self, entry: LogEntry) -> bool:
+        """Проверяет, является ли запись аномальной (ошибка/критично/ключевые слова)."""
         if entry.level in (LogLevel.ERROR, LogLevel.CRITICAL):
             return True
         message_lower = entry.message.lower()
@@ -149,15 +157,72 @@ class LogList(RichLog):
                 return True
         return False
 
+    # ------------------------------------------------------------------
+    # Обновление отображения
+    # ------------------------------------------------------------------
+
     def _update_display(self) -> None:
-        lines = self._build_lines()
+        """Перестраивает DataTable с учётом фильтрации.
+
+        DataTable виртуализирует рендеринг — отображаются только видимые строки,
+        что обеспечивает высокую производительность даже при 50000+ записях.
+        """
+        self._ensure_columns()
+        self._filtered_entries = self._get_filtered_entries()
+
+        # Если столбцы ещё не добавлены (тесты без контекста app) — выходим
+        if not self._columns_added:
+            return
+
         self.clear()
-        for line in lines:
-            self.write(line)
+
+        # Храним RowKey для каждой строки — нужен для стилизации ячеек
+        row_keys: list = []
+
+        # Заполняем таблицу данными
+        for i, entry in enumerate(self._filtered_entries):
+            time_str, level_text, message, styles = self._build_line(entry, i)
+            # add_row возвращает RowKey — его нужно использовать для стилизации
+            row_key = self.add_row(time_str, level_text, message)
+            row_keys.append(row_key)
+
+        # Применяем стили к ячейкам после добавления всех строк
+        for i, entry in enumerate(self._filtered_entries):
+            _, _, _, styles = self._build_line(entry, i)
+            row_key = row_keys[i]
+            # set_cell принимает RowKey и стиль как именованный параметр
+            try:
+                self.set_cell(row_key, 0, style=styles["timestamp"])
+            except Exception:
+                pass
+            try:
+                self.set_cell(row_key, 1, style=styles["level"])
+            except Exception:
+                pass
+            try:
+                self.set_cell(row_key, 2, style=styles["message"])
+            except Exception:
+                pass
+
+            # Выделяем выбранную строку
+            if i == self._selectedIndex:
+                try:
+                    self.set_row_key(row_key, classes=["row-selected"])
+                except Exception:
+                    pass
+
+        # Корректируем курсор после перестройки
+        if self._selectedIndex >= len(self._filtered_entries):
+            self._selectedIndex = max(len(self._filtered_entries) - 1, -1)
 
     def add_entries(self, entries: list[LogEntry]) -> None:
+        """Добавляет новые записи и перестраивает отображение."""
         self._entries.extend(entries)
         self._update_display()
+
+    # ------------------------------------------------------------------
+    # Источники
+    # ------------------------------------------------------------------
 
     def set_sources(self, sources: list[LogSource]) -> None:
         self._sources = sources
@@ -212,44 +277,14 @@ class LogList(RichLog):
         except Exception:
             pass
 
-    def _get_error_blocks(self) -> list[list[int]]:
-        blocks = []
-        current_block = []
-        filtered = self._get_filtered_entries()
-        for i, entry in enumerate(filtered):
-            if entry.level in (LogLevel.ERROR, LogLevel.CRITICAL):
-                if current_block:
-                    blocks.append(current_block)
-                current_block = [i]
-            elif current_block:
-                current_block.append(i)
-        if current_block:
-            blocks.append(current_block)
-        return blocks
-
-    def _get_filtered_entries(self) -> list[LogEntry]:
-        entries = self._entries
-        if self._filter_level:
-            level_order = [
-                LogLevel.DEBUG, LogLevel.INFO, LogLevel.WARNING,
-                LogLevel.ERROR, LogLevel.CRITICAL,
-            ]
-            min_idx = level_order.index(self._filter_level)
-            entries = [e for e in entries if level_order.index(e.level) >= min_idx]
-        if self._filter_text:
-            text = self._filter_text.lower()
-            entries = [
-                e for e in entries
-                if text in e.message.lower()
-                or text in e.level.value.lower()
-                or text in e.timestamp.lower()
-            ]
-        return entries
+    # ------------------------------------------------------------------
+    # Выбор и навигация
+    # ------------------------------------------------------------------
 
     @property
     def selected_entry(self) -> LogEntry | None:
-        if 0 <= self._selectedIndex < len(self._get_filtered_entries()):
-            return self._get_filtered_entries()[self._selectedIndex]
+        if 0 <= self._selectedIndex < len(self._filtered_entries):
+            return self._filtered_entries[self._selectedIndex]
         return None
 
     @property
@@ -258,7 +293,7 @@ class LogList(RichLog):
 
     @selected_index.setter
     def selected_index(self, value: int) -> None:
-        filtered = self._get_filtered_entries()
+        filtered = self._filtered_entries
         if value < 0:
             self._selectedIndex = -1
         elif value >= len(filtered):
@@ -287,12 +322,45 @@ class LogList(RichLog):
             self.current_source_index = current + 1
             self._safe_notify(f"Source: {self._sources[min(current + 1, len(self._sources) - 1)].name}")
 
-    def _safe_notify(self, message: str) -> None:
-        try:
-            if self.app:
-                self.app.notify(message)
-        except Exception:
-            pass
+    # ------------------------------------------------------------------
+    # Действия
+    # ------------------------------------------------------------------
+
+    def action_toggle_filter_mode(self) -> None:
+        """Открыть модальное окно фильтрации.
+
+        Если фильтр уже активен — сбрасывает его и закрывает.
+        Если фильтра нет — открывает модальное окно для ввода.
+        """
+        if self._filter_text:
+            self._filter_text = ""
+            self._selectedIndex = -1
+            self._update_display()
+            self._safe_notify("Фильтр сброшен")
+        else:
+            try:
+                app = self.app
+                self._filter_text = ""
+                self._safe_notify("Введите текст для фильтрации")
+                app.push_screen(FilterModal(), self._handle_filter_result)
+            except Exception:
+                self._safe_notify("Ошибка: приложение не доступно")
+
+    def _handle_filter_result(self, result: str | None) -> None:
+        """Обработка результата ввода фильтра из модального окна."""
+        if result is None:
+            self._safe_notify("Фильтрация отменена")
+        elif result == "":
+            self._filter_text = ""
+            self._selectedIndex = -1
+            self._update_display()
+            self._safe_notify("Фильтр сброшен")
+        else:
+            self._filter_text = result
+            self._selectedIndex = -1
+            self._update_display()
+            filtered_count = len(self._get_filtered_entries())
+            self._safe_notify(f"Фильтр применён: {filtered_count} записей")
 
     def action_select_entry(self) -> None:
         if self._selectedIndex >= 0:
@@ -304,27 +372,14 @@ class LogList(RichLog):
     def action_deselect(self) -> None:
         self.selected_index = -1
 
-    def apply_filter(self, text: str) -> None:
-        self._filter_text = text
-        self._selectedIndex = -1
-        self._update_display()
-
-    def set_level_filter(self, level: LogLevel | None) -> None:
-        self._filter_level = level
-        self._selectedIndex = -1
-        self._update_display()
-
-    def set_text_filter(self, text: str) -> None:
-        self._filter_text = text
-        self._selectedIndex = -1
-        self._update_display()
-
     def action_next_error(self) -> None:
+        """Переход к следующей группе ошибок."""
         filtered = self._get_filtered_entries()
         error_blocks = self._get_error_blocks()
         if not error_blocks:
             self._safe_notify("No errors found")
             return
+
         current_block_start = None
         if self._selectedIndex >= 0:
             for block in error_blocks:
@@ -333,11 +388,13 @@ class LogList(RichLog):
                     break
             if current_block_start is None:
                 current_block_start = self._selectedIndex
+
         next_block = None
         for block in error_blocks:
             if current_block_start is None or block[0] > current_block_start:
                 next_block = block
                 break
+
         if next_block:
             self.selected_index = next_block[0]
             error_entry = filtered[next_block[0]]
@@ -345,6 +402,21 @@ class LogList(RichLog):
         else:
             self.selected_index = error_blocks[-1][0]
             self._safe_notify("At last error")
+
+    def _get_error_blocks(self) -> list[list[int]]:
+        """Возвращает блоки подряд идущих ошибок."""
+        blocks = []
+        current_block = []
+        for i, entry in enumerate(self._filtered_entries):
+            if entry.level in (LogLevel.ERROR, LogLevel.CRITICAL):
+                if current_block:
+                    blocks.append(current_block)
+                current_block = [i]
+            elif current_block:
+                current_block.append(i)
+        if current_block:
+            blocks.append(current_block)
+        return blocks
 
     def action_add_tag(self) -> None:
         """Тоггл тега 'исследовать' — добавляет или убирает."""
@@ -380,3 +452,14 @@ class LogList(RichLog):
     def add_tag(self, tag: str) -> None:
         """Добавляет тег к выбранной записи (для вызова из кода/тестов)."""
         self._apply_tag(tag)
+
+    # ------------------------------------------------------------------
+    # Утилиты
+    # ------------------------------------------------------------------
+
+    def _safe_notify(self, message: str) -> None:
+        try:
+            if self.app:
+                self.app.notify(message)
+        except Exception:
+            pass
