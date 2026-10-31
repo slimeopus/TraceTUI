@@ -11,6 +11,7 @@ from textual.theme import Theme
 from .widgets.log_list import LogList
 from .widgets.source_panel import SourcePanel
 from .widgets.detail_panel import DetailPanel
+from .widgets.live_monitor import LiveMonitor
 from .models import LogSource
 from .parsers.log_parser import load_log_source
 
@@ -44,6 +45,17 @@ class TraceTUIApp(App):
         overflow: auto;
     }
 
+    /* Стили DataTable — виртуализированный рендеринг логов */
+    LogList {
+        background: $boost;
+    }
+
+    LogList .row-selected {
+        background: $primary;
+        color: white;
+        text-style: bold;
+    }
+
     #detail-panel {
         width: 100%;
         height: 95%;
@@ -70,6 +82,8 @@ class TraceTUIApp(App):
         # Пути к файлам для асинхронной загрузки
         self._file_paths: list[Path] = file_paths or []
         self._format_type: str = format_type
+        # Live-мониторинг
+        self._live_monitor: LiveMonitor | None = None
 
     def on_mount(self) -> None:
         """Инициализация приложения."""
@@ -116,6 +130,11 @@ class TraceTUIApp(App):
         self.call_later(self._load_pending_sources)
         # Запускаем асинхронную загрузку файлов
         self.call_later(self._load_sources_from_paths)
+
+    def on_stop(self) -> None:
+        """Остановка при закрытии приложения."""
+        if self._live_monitor:
+            self._live_monitor.stop()
 
     def compose(self):
         """Создание интерфейса с тремя панелями."""
@@ -174,12 +193,74 @@ class TraceTUIApp(App):
             source.is_active = True
             source_panel.refresh()
 
+        # Запускаем мониторинг, если это первый файл
+        if len(self._sources) == 1 and self._file_paths and not self._live_monitor:
+            self._start_live_monitor()
+
     def action_toggle_filter_mode(self) -> None:
-        """Включить/выключить режим фильтрации."""
+        """Передать действие фильтрации в LogList."""
         log_list = self.query_one("#log-list", LogList)
         log_list.action_toggle_filter_mode()
-        if log_list._filter_mode:
-            self.notify("Filter mode ON — Enter text, Enter to apply, Esc to cancel")
+
+    def _start_live_monitor(self) -> None:
+        """Запускает фоновый мониторинг файлов."""
+        if not self._file_paths:
+            return
+
+        self._live_monitor = LiveMonitor(
+            file_paths=self._file_paths,
+            format_type=self._format_type,
+            on_new_entries=self._handle_new_entries,
+            poll_interval=1.0,
+        )
+        self._live_monitor.start()
+        self.notify("Live-мониторинг запущен", severity="information")
+
+    def _handle_new_entries(self, entries: list, file_path: Path) -> None:
+        """Обработчик новых записей из файлов.
+
+        Вызывается из фонового воркера для обновления UI.
+
+        Args:
+            entries: Список новых LogEntry
+            file_path: Путь к файлу, в котором появились записи
+        """
+        self.call_after_refresh(self._process_new_entries, entries, file_path)
+
+    def _process_new_entries(self, entries: list, file_path: Path) -> None:
+        """Добавляет новые записи в UI.
+
+        Args:
+            entries: Список новых LogEntry
+            file_path: Путь к файлу
+        """
+        if not entries:
+            return
+
+        # Находим источник по пути
+        source = None
+        for s in self._sources:
+            if s.path == file_path:
+                source = s
+                break
+
+        if not source:
+            return
+
+        # Добавляем новые записи
+        source.entries.extend(entries)
+        source.has_new = True
+
+        # Обновляем LogList
+        log_list = self.query_one("#log-list", LogList)
+        log_list.add_entries(entries)
+
+        # Обновляем счётчик в SourcePanel
+        source_panel = self.query_one("#source-panel", SourcePanel)
+        source_panel._refresh_sources()
+
+        # Показываем уведомление
+        self.notify(f"+{len(entries)} новых записей из {source.name}")
 
     def action_next_error(self) -> None:
         """Переход к следующей ошибке."""

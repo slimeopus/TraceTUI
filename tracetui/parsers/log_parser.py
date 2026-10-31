@@ -145,6 +145,7 @@ class LogParser:
         """Парсит файл логов построчно, собирая многострочные traceback."""
         # 1. Определяем формат по первым строкам
         if format_type == "auto":
+            detected = False
             with open(path, "r", encoding="utf-8", errors="replace") as f:
                 for _ in range(10):
                     line = f.readline()
@@ -153,7 +154,12 @@ class LogParser:
                     fmt = cls.detect_format(line)
                     if fmt != "unknown":
                         format_type = fmt
+                        detected = True
                         break
+            # Фиксируем формат — если не определили ни один из трёх,
+            # ставим "simple" чтобы не гонять detect_format() на каждую строку
+            if not detected:
+                format_type = "simple"
 
         # 2. Буферизация: накапливаем continuation lines до новой записи лога
         current_entry: LogEntry | None = None

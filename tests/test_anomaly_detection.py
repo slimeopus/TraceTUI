@@ -113,8 +113,11 @@ class TestAnomalyDetection:
             LogEntry(level=LogLevel.DEBUG, message="debug info"),
         ]
         log_list._entries = entries
-        content = "\n".join(log_list._build_lines())
-        assert "2 anomalies" in content
+        # DataTable использует _build_line() вместо _build_lines()
+        # Проверяем аномалии через get_filtered_entries
+        filtered = log_list._get_filtered_entries()
+        anomaly_count = sum(1 for e in filtered if log_list._is_anomaly(e))
+        assert anomaly_count == 2
 
     def test_custom_anomaly_keywords(self):
         """Проверка что список ключевых слов не пустой."""

@@ -6,7 +6,7 @@
 ![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![License](https://img.shields.io/github/license/slimeopus/TraceTUI)
 
-![Preview](Идея.jpeg)
+![Preview](.github/assets/preview.jpeg)
 
 ## ✨ Возможности
 
