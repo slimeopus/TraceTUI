@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tracetui"
-version = "0.2.0"
+version = "0.3.0"
 description = "Interactive TUI debugger for logs with real-time parsing and filtering"
 readme = "README.md"
 license = {text = "MIT"}
@@ -17,7 +17,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
-    "pytest-textual>=0.1.0",
 ]
 
 [project.scripts]
