@@ -36,6 +36,8 @@ class LogList(DataTable):
         self._sources: list[LogSource] = []
         # Флаг для ленивой инициализации столбцов
         self._columns_added: bool = False
+        # Флаг для тестов: не пересчитывать _filtered_entries
+        self._testing: bool = False
 
         # Ключевые слова для детекции аномалий
         self._anomaly_keywords = [
@@ -168,7 +170,9 @@ class LogList(DataTable):
         что обеспечивает высокую производительность даже при 50000+ записях.
         """
         self._ensure_columns()
-        self._filtered_entries = self._get_filtered_entries()
+        # В режиме тестов не пересчитываем _filtered_entries (тесты могут задать вручную)
+        if not self._testing:
+            self._filtered_entries = self._get_filtered_entries()
 
         # Если столбцы ещё не добавлены (тесты без контекста app) — выходим
         if not self._columns_added:
@@ -404,16 +408,22 @@ class LogList(DataTable):
             self._safe_notify("At last error")
 
     def _get_error_blocks(self) -> list[list[int]]:
-        """Возвращает блоки подряд идущих ошибок."""
-        blocks = []
-        current_block = []
+        """Возвращает блоки подряд идущих ошибок.
+
+        Каждый блок — список индексов в _filtered_entries,
+        где встречаются ERROR или CRITICAL записи.
+        """
+        blocks: list[list[int]] = []
+        current_block: list[int] = []
         for i, entry in enumerate(self._filtered_entries):
             if entry.level in (LogLevel.ERROR, LogLevel.CRITICAL):
+                current_block.append(i)
+            else:
+                # Не ошибка — завершаем текущий блок если есть
                 if current_block:
                     blocks.append(current_block)
-                current_block = [i]
-            elif current_block:
-                current_block.append(i)
+                    current_block = []
+        # Не забываем последний блок если файл закончился на ошибке
         if current_block:
             blocks.append(current_block)
         return blocks

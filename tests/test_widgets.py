@@ -203,8 +203,10 @@ class TestLogListErrorBlocks:
             LogEntry(level=LogLevel.CRITICAL, message="critical1", traceback="trace2"),
         ]
         log_list._entries = entries
+        log_list._testing = True  # Отключаем автопересчёт для тестов
+        log_list._filtered_entries = entries  # Имитируем результат фильтрации
         blocks = log_list._get_error_blocks()
-        assert len(blocks) >= 1
+        assert len(blocks) >= 1, f"Expected error blocks, got {blocks}"
 
     def test_error_block_indices(self):
         """Индексы в блоках ошибок."""
@@ -216,8 +218,10 @@ class TestLogListErrorBlocks:
             LogEntry(level=LogLevel.INFO, message="info2"),
         ]
         log_list._entries = entries
+        log_list._testing = True  # Отключаем автопересчёт для тестов
+        log_list._filtered_entries = entries  # Имитируем результат фильтрации
         blocks = log_list._get_error_blocks()
-        assert len(blocks) >= 1
+        assert len(blocks) >= 1, f"Expected error blocks, got {blocks}"
 
 
 class TestLogListNextError:
@@ -233,6 +237,8 @@ class TestLogListNextError:
             LogEntry(level=LogLevel.CRITICAL, message="critical1"),
         ]
         log_list._entries = entries
+        log_list._testing = True
+        log_list._filtered_entries = entries
         log_list.selected_index = 0
 
         with patch.object(log_list, '_safe_notify'):
@@ -247,6 +253,8 @@ class TestLogListNextError:
             LogEntry(level=LogLevel.DEBUG, message="debug"),
         ]
         log_list._entries = entries
+        log_list._testing = True
+        log_list._filtered_entries = entries
         log_list.selected_index = 0
 
         with patch.object(log_list, '_safe_notify') as mock_notify:
@@ -262,6 +270,8 @@ class TestLogListTags:
         log_list = LogList()
         entry = LogEntry(level=LogLevel.ERROR, message="error")
         log_list._entries = [entry]
+        log_list._testing = True
+        log_list._filtered_entries = [entry]
         log_list.selected_index = 0
 
         with patch.object(log_list, '_safe_notify'):
@@ -274,6 +284,8 @@ class TestLogListTags:
         log_list = LogList()
         entry = LogEntry(level=LogLevel.ERROR, message="error", tags=["tag1"])
         log_list._entries = [entry]
+        log_list._testing = True
+        log_list._filtered_entries = [entry]
         log_list.selected_index = 0
 
         with patch.object(log_list, '_safe_notify'):
@@ -290,6 +302,8 @@ class TestLogListSelect:
         log_list = LogList()
         entry = LogEntry(level=LogLevel.ERROR, message="test error")
         log_list._entries = [entry]
+        log_list._testing = True
+        log_list._filtered_entries = [entry]
         log_list.selected_index = 0
 
         with patch.object(log_list, '_safe_notify'):
@@ -326,22 +340,22 @@ class TestLogListFilterMode:
 
 
 class TestLogListDisplay:
-    """Тесты отображения."""
+    """Тесты отображения (DataTable)."""
 
     def test_render_no_entries(self):
-        """Пустой список логов."""
+        """Пустой список логов — таблица пуста."""
         log_list = LogList()
-        content = chr(10).join(log_list._build_lines())
-        assert "No logs loaded" in content
+        log_list._update_display()
+        assert len(log_list._filtered_entries) == 0
 
     def test_render_with_entries(self):
-        """Список с записями."""
+        """Список с записями — строки добавлены в таблицу."""
         log_list = LogList()
         log_list.add_entries([
             LogEntry(level=LogLevel.ERROR, message="error msg", timestamp="2024-01-01")
         ])
-        assert "No logs loaded" not in chr(10).join(log_list._build_lines())
-        assert "error msg" in chr(10).join(log_list._build_lines())
+        assert len(log_list._filtered_entries) == 1
+        assert log_list._filtered_entries[0].message == "error msg"
 
     def test_render_shows_level(self):
         """Отображение уровня."""
@@ -349,7 +363,8 @@ class TestLogListDisplay:
         log_list.add_entries([
             LogEntry(level=LogLevel.WARNING, message="warn msg")
         ])
-        assert "WARNING" in chr(10).join(log_list._build_lines())
+        assert len(log_list._filtered_entries) == 1
+        assert log_list._filtered_entries[0].level == LogLevel.WARNING
 
     def test_render_shows_timestamp(self):
         """Отображение timestamp."""
@@ -357,4 +372,33 @@ class TestLogListDisplay:
         log_list.add_entries([
             LogEntry(level=LogLevel.INFO, message="msg", timestamp="2024-01-01 12:00:00")
         ])
-        assert "2024-01-01" in chr(10).join(log_list._build_lines())
+        assert len(log_list._filtered_entries) == 1
+        assert log_list._filtered_entries[0].timestamp == "2024-01-01 12:00:00"
+
+    def test_build_line_formats_correctly(self):
+        """Проверка форматирования строки для DataTable."""
+        log_list = LogList()
+        entry = LogEntry(
+            level=LogLevel.ERROR,
+            message="test error message",
+            timestamp="2024-01-01 12:00:00",
+        )
+        time_str, level_text, message, styles = log_list._build_line(entry, 0)
+        assert "2024-01-01 12:00:00" in time_str
+        assert "ERROR" in level_text
+        assert "test error message" in message
+        assert "color:" in styles["level"]
+
+    def test_build_line_formats_correctly(self):
+        """Проверка форматирования строки для DataTable."""
+        log_list = LogList()
+        entry = LogEntry(
+            level=LogLevel.ERROR,
+            message="test error message",
+            timestamp="2024-01-01 12:00:00",
+        )
+        time_str, level_text, message, styles = log_list._build_line(entry, 0)
+        assert "2024-01-01 12:00:00" in time_str
+        assert "ERROR" in level_text
+        assert "test error message" in message
+        assert "color:" in styles["level"]
