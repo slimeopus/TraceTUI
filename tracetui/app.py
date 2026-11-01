@@ -75,13 +75,15 @@ class TraceTUIApp(App):
         Binding("right", "switch_source_right", "Next source"),
     ]
 
-    def __init__(self, file_paths: list[Path] | None = None, format_type: str = "auto", **kwargs):
+    def __init__(self, file_paths: list[Path] | None = None, format_type: str = "auto", log_level: str | None = None, **kwargs):
         super().__init__(**kwargs)
         self._is_dark = True
         self._pending_sources: list[LogSource] = []
         # Пути к файлам для асинхронной загрузки
         self._file_paths: list[Path] = file_paths or []
         self._format_type: str = format_type
+        # Минимальный уровень логирования для фильтрации
+        self._log_level: str | None = log_level
         # Live-мониторинг
         self._live_monitor: LiveMonitor | None = None
 
@@ -181,6 +183,9 @@ class TraceTUIApp(App):
         if source not in self._sources:
             self._sources.append(source)
 
+        # Фильтруем записи по минимальному уровню логирования
+        source.entries = self._filter_entries_by_level(source.entries)
+
         source_panel = self.query_one("#source-panel", SourcePanel)
         source_panel.add_source(source)
 
@@ -202,10 +207,34 @@ class TraceTUIApp(App):
         log_list = self.query_one("#log-list", LogList)
         log_list.action_toggle_filter_mode()
 
+    def _filter_entries_by_level(self, entries: list) -> list:
+        """Фильтрует записи по минимальному уровню логирования.
+
+        Args:
+            entries: Список LogEntry для фильтрации
+
+        Returns:
+            Отфильтрованный список записей
+        """
+        if not self._log_level:
+            return entries
+
+        # Определяем порядковый номер минимального уровня
+        level_order = {
+            "DEBUG": 0,
+            "INFO": 1,
+            "WARNING": 2,
+            "ERROR": 3,
+            "CRITICAL": 4,
+        }
+        min_order = level_order.get(self._log_level.upper(), 0)
+
+        return [
+            entry for entry in entries
+            if level_order.get(entry.level.value, 0) >= min_order
+        ]
+
     def _start_live_monitor(self) -> None:
-        """Запускает фоновый мониторинг файлов."""
-        if not self._file_paths:
-            return
 
         self._live_monitor = LiveMonitor(
             file_paths=self._file_paths,
@@ -237,6 +266,11 @@ class TraceTUIApp(App):
         if not entries:
             return
 
+        # Фильтруем по минимальному уровню логирования
+        entries = self._filter_entries_by_level(entries)
+        if not entries:
+            return
+
         # Находим источник по пути
         source = None
         for s in self._sources:
@@ -247,8 +281,8 @@ class TraceTUIApp(App):
         if not source:
             return
 
-        # Добавляем новые записи
-        source.entries.extend(entries)
+        # Добавляем новые записи с ограничением по памяти
+        source.add_entries(entries)
         source.has_new = True
 
         # Обновляем LogList

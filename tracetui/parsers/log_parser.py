@@ -143,7 +143,7 @@ class LogParser:
     @classmethod
     def parse_file(cls, path: Path, format_type: str = "auto") -> Iterator[LogEntry]:
         """Парсит файл логов построчно, собирая многострочные traceback."""
-        # 1. Определяем формат по первым строкам
+        # 1. Определяем формат по первыми строкам
         if format_type == "auto":
             detected = False
             with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -206,6 +206,90 @@ class LogParser:
         # Финальная флущение последнего entry
         if current_entry is not None:
             yield from flush_buffer()
+
+    @classmethod
+    def parse_lines(
+        cls,
+        lines: list[str],
+        format_type: str = "auto",
+        partial_entry: LogEntry | None = None,
+        partial_buffer: list[str] | None = None,
+    ) -> tuple[list[LogEntry], LogEntry | None, list[str], str]:
+        """Потоковый парсинг списка строк с сохранением состояния незавершённого traceback.
+
+        Этот метод позволяет корректно обрабатывать новые строки, которые могут
+        оборваться посередине многострочного traceback.
+
+        Args:
+            lines: Список новых строк для парсинга
+            format_type: Тип формата логов
+            partial_entry: Не завершённый LogEntry из предыдущей порции
+            partial_buffer: Накопленные continuation lines из предыдущей порции
+
+        Returns:
+            Кортеж из:
+                - list[LogEntry]: Список полностью распарсенных записей
+                - LogEntry | None: Не завершённый entry (если есть)
+                - list[str]: Накопленные continuation lines для незавершённого entry
+                - str: Текущий формат (если был auto-detect)
+        """
+        # Инициализируем состояние
+        if partial_entry is None:
+            current_entry: LogEntry | None = None
+            continuation_buffer: list[str] = []
+        else:
+            current_entry = partial_entry
+            continuation_buffer = partial_buffer if partial_buffer is not None else []
+
+        # Определяем формат, если auto
+        if format_type == "auto":
+            # Пробуем определить формат по первым непустым строкам
+            for line in lines:
+                stripped = line.strip()
+                if stripped:
+                    detected_fmt = cls.detect_format(stripped)
+                    if detected_fmt != "unknown":
+                        format_type = detected_fmt
+                    break
+            else:
+                format_type = "simple"
+
+        completed_entries: list[LogEntry] = []
+
+        for line in lines:
+            stripped = line.strip()
+            # Пустые строки — тоже continuation (разделители traceback)
+            if not stripped:
+                continuation_buffer.append(line)
+                continue
+
+            if cls._is_new_log_line(stripped, format_type):
+                # Новая запись — сначала отдаём предыдущую, если она есть
+                if current_entry is not None:
+                    # Формируем traceback из буфера
+                    if continuation_buffer:
+                        tb_lines = []
+                        for cline in continuation_buffer:
+                            s_line = cline.rstrip()
+                            if s_line:
+                                tb_lines.append(s_line)
+                        if tb_lines:
+                            current_entry.traceback = "\n".join(tb_lines)
+                    completed_entries.append(current_entry)
+                    current_entry = None
+                    continuation_buffer = []
+
+                # Начинаем новый entry
+                current_entry = cls.parse_line(stripped, format_type)
+                continuation_buffer = []
+            else:
+                # Continuation line (traceback, stack trace, и т.д.)
+                if current_entry is not None:
+                    continuation_buffer.append(line)
+                # Если entry ещё нет — пропускаем сиротские строки
+
+        # Возвращаем завершённые записи и состояние для незавершённого entry
+        return completed_entries, current_entry, continuation_buffer, format_type
 
 
 def load_log_source(path: Path, format_type: str = "auto") -> LogSource:

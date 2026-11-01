@@ -46,6 +46,7 @@ def main():
     app = TraceTUIApp(
         file_paths=valid_paths if valid_paths else None,
         format_type=args.format,
+        log_level=args.log_level,
     )
 
     app.run()
