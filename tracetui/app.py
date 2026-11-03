@@ -235,6 +235,9 @@ class TraceTUIApp(App):
         ]
 
     def _start_live_monitor(self) -> None:
+        """Запускает фоновый мониторинг файлов."""
+        if not self._file_paths:
+            return
 
         self._live_monitor = LiveMonitor(
             file_paths=self._file_paths,

@@ -267,7 +267,6 @@ class LogList(DataTable):
         if trimmed:
             self._update_display()
             return
-
         # Если включён любой фильтр — нужна полная перестройка
         # (появляются/исчезают записи в произвольных местах)
         if self._filter_level or self._filter_text:
