@@ -65,6 +65,10 @@ class LogEntry:
         return " ".join(parts)
 
 
+# Максимальное количество записей в одном источнике (для предотвращения утечки памяти)
+MAX_ENTRIES = 10_000
+
+
 @dataclass
 class LogSource:
     """Источник логов (файл или поток)."""
@@ -79,3 +83,18 @@ class LogSource:
     @property
     def entry_count(self) -> int:
         return len(self.entries)
+
+    def add_entries(self, entries: list[LogEntry]) -> None:
+        """Добавляет новые записи с ограничением по максимальному количеству.
+
+        При превышении MAX_ENTRIES удаляет старые элементы с начала списка,
+        чтобы предотвратить утечку памяти.
+
+        Args:
+            entries: Список новых LogEntry для добавления
+        """
+        self.entries.extend(entries)
+        # Если превышен лимит — обрезаем с начала
+        if len(self.entries) > MAX_ENTRIES:
+            excess = len(self.entries) - MAX_ENTRIES
+            self.entries = self.entries[excess:]

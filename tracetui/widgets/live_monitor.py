@@ -22,7 +22,7 @@ class LiveMonitor:
     Работает как асинхронный воркер, который:
     - Периодически проверяет размер файлов
     - Дочитывает новые строки при изменении
-    - Парсит новые записи и добавляет их в LogList
+    - Парсит новые записи с сохранением состояния незавершённых traceback
     """
 
     def __init__(
@@ -52,6 +52,9 @@ class LiveMonitor:
                 self._file_positions[path] = path.stat().st_size
             except OSError:
                 self._file_positions[path] = 0
+        # Состояние парсера для каждого файла (для обработки многострочных traceback)
+        # Ключ: Path, Значение: (partial_entry, partial_buffer, detected_format)
+        self._parser_states: dict[Path, tuple] = {}
         self._running = False
         self._task: asyncio.Task | None = None
 
@@ -93,10 +96,26 @@ class LiveMonitor:
         """Проверить один файл на наличие новых данных.
 
         Работает асинхронно в пуле потоков для предотвращения блокировки.
+
+        Обработка ротации логов: если размер файла уменьшился (перезапись/clear),
+        сбрасываем позицию чтения в ноль и очищаем буфер парсера.
         """
         try:
             current_size = path.stat().st_size
             last_position = self._file_positions.get(path, 0)
+
+            if current_size < last_position:
+                # 🔄 Ротация логов: файл уменьшился — сбрасываем позицию
+                logger.info(
+                    "Обнаружена ротация файла %s (%d -> %d), сброс позиции",
+                    path, last_position, current_size,
+                )
+                self._file_positions[path] = 0
+                # Очищаем буфер парсера для этого файла
+                if path in self._parser_states:
+                    del self._parser_states[path]
+                # Сбрасываем позицию для корректного чтения с начала
+                return
 
             if current_size > last_position:
                 # Файл увеличился — дочитываем новые строки
@@ -163,7 +182,10 @@ class LiveMonitor:
         return await loop.run_in_executor(None, _read)
 
     async def _parse_new_lines(self, lines: list[str], path: Path) -> list:
-        """Парсит новые строки в LogEntry.
+        """Парсит новые строки в LogEntry с сохранением состояния traceback.
+
+        Использует потоковый парсер, который корректно обрабатывает
+        многострочные traceback, сохраняя состояние между проверками.
 
         Args:
             lines: Список новых строк
@@ -175,18 +197,34 @@ class LiveMonitor:
         loop = asyncio.get_event_loop()
 
         def _parse() -> list:
-            """Синхронный парсинг строк."""
-            entries = []
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = LogParser.parse_line(line, self._format_type)
-                    if entry:
-                        entries.append(entry)
-                except Exception as e:
-                    logger.debug("Ошибка парсинга строки в %s: %s — %s", path, line[:50], e)
-            return entries
+            """Синхронный парсинг строк с сохранением состояния."""
+            # Получаем сохранённое состояние парсера для этого файла
+            parser_state = self._parser_states.get(path)
+
+            if parser_state:
+                partial_entry, partial_buffer, detected_format = parser_state
+            else:
+                partial_entry = None
+                partial_buffer = []
+                detected_format = self._format_type
+
+            # Используем потоковый парсер с сохранением состояния
+            completed_entries, unfinished_entry, unfinished_buffer, final_format = (
+                LogParser.parse_lines(
+                    lines,
+                    format_type=detected_format,
+                    partial_entry=partial_entry,
+                    partial_buffer=partial_buffer,
+                )
+            )
+
+            # Сохраняем состояние для следующей итерации
+            if unfinished_entry is not None:
+                self._parser_states[path] = (unfinished_entry, unfinished_buffer, final_format)
+            elif path in self._parser_states:
+                # Если нет незавершённого entry, убираем состояние
+                del self._parser_states[path]
+
+            return completed_entries
 
         return await loop.run_in_executor(None, _parse)

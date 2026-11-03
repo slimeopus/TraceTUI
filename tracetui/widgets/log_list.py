@@ -12,6 +12,10 @@ from ..models import LogEntry, LogLevel, LogSource
 from .filter_input import FilterModal
 
 
+# Максимальное количество записей в LogList (для предотвращения утечки памяти)
+MAX_ENTRIES = 10_000
+
+
 class LogList(DataTable):
     """Центральная панель с потоком логов (DataTable с виртуализацией)."""
 
@@ -242,13 +246,27 @@ class LogList(DataTable):
         новые строки просто дописываются в конец компонента через add_row().
         Полный сброс (clear()) происходит только при изменении фильтра
         логов или смене файла логов (методы _update_display).
+
+        Механизм ротации: при превышении MAX_ENTRIES удаляет старые записи
+        с начала списка, чтобы предотвратить утечку памяти.
         """
         self._entries.extend(entries)
+
+        # Встречный сброс: обрезаем старые записи при превышении лимита
+        trimmed = False
+        if len(self._entries) > MAX_ENTRIES:
+            excess = len(self._entries) - MAX_ENTRIES
+            self._entries = self._entries[excess:]
+            trimmed = True
 
         # Всегда пересчитываем отфильтрованные записи (нужно для навигации)
         old_filtered_count = len(self._filtered_entries)
         self._filtered_entries = self._get_filtered_entries()
 
+        # Если был срез старых записей — полная перестройка DataTable обязательна
+        if trimmed:
+            self._update_display()
+            return
         # Если включён любой фильтр — нужна полная перестройка
         # (появляются/исчезают записи в произвольных местах)
         if self._filter_level or self._filter_text:
@@ -360,22 +378,43 @@ class LogList(DataTable):
         self._update_display()
 
     def action_cursor_up(self) -> None:
+        # 🛡️ Guard-clause: если список пуст — не двигаем курсор
+        if not self._filtered_entries:
+            self._selectedIndex = -1
+            self._update_display()
+            return
         self.selected_index = self._selectedIndex - 1
 
     def action_cursor_down(self) -> None:
+        # 🛡️ Guard-clause: если список пуст — не двигаем курсор
+        if not self._filtered_entries:
+            self._selectedIndex = -1
+            self._update_display()
+            return
         self.selected_index = self._selectedIndex + 1
 
     def action_cursor_left(self) -> None:
-        if self._sources:
-            current = self.current_source_index
-            self.current_source_index = current - 1
-            self._safe_notify(f"Source: {self._sources[max(0, current - 1)].name}")
+        pass  # Переключение источников перенесено в TraceTUIApp
 
     def action_cursor_right(self) -> None:
-        if self._sources:
-            current = self.current_source_index
-            self.current_source_index = current + 1
-            self._safe_notify(f"Source: {self._sources[min(current + 1, len(self._sources) - 1)].name}")
+        pass  # Переключение источников перенесено в TraceTUIApp
+
+    def switch_source(self, direction: int) -> None:
+        """Переключает активный источник на заданное направление.
+
+        Метод поднят на уровень TraceTUIApp для корректной синхронизации
+        SourcePanel и LogList. direction: -1 (влево), +1 (вправо).
+
+        Args:
+            direction: Направление переключения (-1 или +1)
+        """
+        if not self._sources:
+            return
+        current = self.current_source_index
+        new_index = (current + 1 + direction) % len(self._sources)
+        self.current_source_index = new_index
+        source = self._sources[new_index]
+        self._safe_notify(f"Source: {source.name}")
 
     # ------------------------------------------------------------------
     # Действия

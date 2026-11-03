@@ -53,13 +53,14 @@ Thumbs.db
 *.temp
 ~$*
 
-# AI Agents
+# AI Agents & Tools
 .agents/
 .gigacode/
+.gigacode_vsc/
 GIGACODE.md
 
 # Screenshots in root (move to .github/assets/ instead)
-Идея.jpeg
-ошибка *.png
+*.png
 *.jpeg
 *.jpg
+Идея.jpeg
