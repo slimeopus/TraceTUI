@@ -96,10 +96,26 @@ class LiveMonitor:
         """Проверить один файл на наличие новых данных.
 
         Работает асинхронно в пуле потоков для предотвращения блокировки.
+
+        Обработка ротации логов: если размер файла уменьшился (перезапись/clear),
+        сбрасываем позицию чтения в ноль и очищаем буфер парсера.
         """
         try:
             current_size = path.stat().st_size
             last_position = self._file_positions.get(path, 0)
+
+            if current_size < last_position:
+                # 🔄 Ротация логов: файл уменьшился — сбрасываем позицию
+                logger.info(
+                    "Обнаружена ротация файла %s (%d -> %d), сброс позиции",
+                    path, last_position, current_size,
+                )
+                self._file_positions[path] = 0
+                # Очищаем буфер парсера для этого файла
+                if path in self._parser_states:
+                    del self._parser_states[path]
+                # Сбрасываем позицию для корректного чтения с начала
+                return
 
             if current_size > last_position:
                 # Файл увеличился — дочитываем новые строки

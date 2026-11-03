@@ -91,7 +91,7 @@ class TraceTUIApp(App):
         """Инициализация приложения."""
         self._sources: list[LogSource] = []
         self.title = "TraceTUI — Log Debugger"
-        self.sub_title = "↑↓ Navigate | ←→ Sources | F Filter | D Tag | E Next Error | T Theme | q Quit"
+        self.sub_title = "↑↓ Navigate | ←→ Sources | F Filter | d Tag | E Next Error | T Theme | q Quit"
 
         # Регистрируем светлую тему
         self.register_theme(
@@ -310,9 +310,9 @@ class TraceTUIApp(App):
     def action_switch_source_left(self) -> None:
         """Переключить на предыдущий источник."""
         log_list = self.query_one("#log-list", LogList)
-        log_list.action_cursor_left()
+        log_list.switch_source(-1)
 
     def action_switch_source_right(self) -> None:
         """Переключить на следующий источник."""
         log_list = self.query_one("#log-list", LogList)
-        log_list.action_cursor_right()
+        log_list.switch_source(1)

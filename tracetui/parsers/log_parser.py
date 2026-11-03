@@ -6,19 +6,14 @@ from typing import Iterator
 
 from ..models import LogEntry, LogSource, LogLevel
 
+# Сепаратор формата loguru
+_LOGURU_SEP = " | "
+
 
 class LogParser:
     """Базовый парсер логов с автоопределением формата."""
 
-    # Паттерн для loguru: 2024-01-15 10:30:45 | LEVEL | module.py:42 - message
-    LOGURU_PATTERN = re.compile(
-        r"(?P<timestamp>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[\.,\d]*)\s*\|\s*"
-        r"(?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL)\s*\|\s*"
-        r"(?P<source>[^:]+?)(?::(?P<line>\d+))?\s*\-\s*"
-        r"(?P<message>.+)"
-    )
-
-    # Паттерн для logging: 2024-01-15 10:30:45,123 - module.name - LEVEL - message
+    # Паттерн для стандартного logging (безопасный, фиксированная длина timestamp)
     LOGGING_PATTERN = re.compile(
         r"(?P<timestamp>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3})\s*-\s*"
         r"(?P<logger>[^:]+?)\s*-\s*"
@@ -31,10 +26,33 @@ class LogParser:
         r"(?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL)\s*\-\s*(?P<message>.+)"
     )
 
+    # Regex только для валидации формата даты (лёгкий, без жадного поиска)
+    _DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}")
+
+    @staticmethod
+    def _looks_like_loguru(line: str) -> bool:
+        """Проверяет, является ли строка форматом loguru (безопасно через split).
+
+        Безопасен для сверхдлинных строк: split с maxsplit=3,
+        а не жадная регулярка (?P<message>.+).
+        """
+        if _LOGURU_SEP not in line:
+            return False
+        parts = line.split(_LOGURU_SEP, 3)
+        if len(parts) < 3:
+            return False
+        # Проверяем префикс даты (лёгкая regex без жадности)
+        timestamp_part = parts[0].strip()
+        if not LogParser._DATE_PREFIX_RE.match(timestamp_part):
+            return False
+        # Проверяем уровень
+        level = parts[1].strip()
+        return level in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
     @staticmethod
     def detect_format(line: str) -> str:
         """Определяет формат лога по первой строке."""
-        if LogParser.LOGURU_PATTERN.match(line):
+        if LogParser._looks_like_loguru(line):
             return "loguru"
         if LogParser.LOGGING_PATTERN.match(line):
             return "logging"
@@ -67,26 +85,63 @@ class LogParser:
 
     @classmethod
     def _parse_loguru(cls, line: str) -> LogEntry | None:
-        """Парсит строку в формате loguru."""
-        match = cls.LOGURU_PATTERN.match(line)
-        if not match:
+        """Парсит строку в формате loguru (безопасно через split).
+
+        Отказ от жадной регулярки (?P<message>.+) для защиты от Regex DoS.
+        Строка разбивается через str.split(' | ', maxsplit=3).
+        """
+        parts = line.split(_LOGURU_SEP, 3)
+        if len(parts) < 3:
             return None
 
-        data = match.groupdict()
-        level = LogLevel[data["level"]]
-        source = data["source"] or ""
+        timestamp = parts[0].strip()
+        level_str = parts[1].strip()
 
-        traceback = ""
-        message = data["message"]
+        if level_str not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+            return None
+
+        level = LogLevel[level_str]
+
+        # Формат: "timestamp | LEVEL | source:line - message"
+        # Третий элемент содержит "source:line - message" — разделяем по " - "
+        source_message_raw = parts[2].strip()
+        message = ""
+        source_part = source_message_raw
+
+        # Ищем разделитель " - " между source и message
+        dash_idx = source_message_raw.find(" - ")
+        if dash_idx != -1:
+            source_part = source_message_raw[:dash_idx].strip()
+            message = source_message_raw[dash_idx + 3:].strip()
+            # Если есть ещё части после " - ", добавляем к сообщению
+            if len(parts) > 3:
+                message += _LOGURU_SEP + parts[3]
+        elif len(parts) > 3:
+            message = parts[3].strip()
+
+        # Парсим source: может быть "module.py:42" или "logger.name"
+        file_path = source_part
+        line_number = 0
+        logger_name = source_part
+
+        # Сначала проверяем формат "module.py:42" — двоеточие + число в конце
+        last_colon = source_part.rfind(":")
+        if last_colon > 0 and source_part[last_colon + 1:].strip().isdigit():
+            file_path = source_part[:last_colon].strip()
+            line_number = int(source_part[last_colon + 1:].strip())
+            logger_name = file_path.split("/")[-1] if "/" in file_path else file_path
+        elif "." in source_part:
+            # Это logger name (например, "app.services.auth")
+            logger_name = source_part.split(".")[-1]
 
         return LogEntry(
             level=level,
             message=message,
-            timestamp=data["timestamp"],
-            logger_name=source.split(".")[-1] if "." in source else source,
-            file_path=source,
-            line_number=int(data["line"]) if data.get("line") else 0,
-            traceback=traceback,
+            timestamp=timestamp,
+            logger_name=logger_name,
+            file_path=file_path,
+            line_number=line_number,
+            traceback="",
         )
 
     @classmethod
@@ -129,8 +184,10 @@ class LogParser:
             return False
         # Если формат уже известен — проверяем по конкретному паттерну
         if format_type != "auto":
+            # Безопасные проверки без жадных regex
+            if format_type == "loguru":
+                return cls._looks_like_loguru(stripped)
             pattern = {
-                "loguru": cls.LOGURU_PATTERN,
                 "logging": cls.LOGGING_PATTERN,
                 "simple": cls.SIMPLE_PATTERN,
             }.get(format_type)
