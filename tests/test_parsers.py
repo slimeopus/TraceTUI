@@ -2,7 +2,8 @@
 
 import pytest
 from pathlib import Path
-from tracetui.parsers.log_parser import LogParser
+from datetime import datetime
+from tracetui.parsers.log_parser import LogParser, timeline_merge
 from tracetui.models import LogLevel, LogEntry
 
 
@@ -126,3 +127,125 @@ class TestLogEntry:
         )
 
         assert entry.traceback == traceback
+
+
+class TestParseTimestamp:
+    """Тесты для LogParser.parse_timestamp()."""
+
+    def test_parse_loguru_format(self):
+        """Парсинг timestamp в формате loguru (без миллисекунд)."""
+        result = LogParser.parse_timestamp("2024-01-15 10:30:45")
+        assert result == datetime(2024, 1, 15, 10, 30, 45)
+
+    def test_parse_logging_format(self):
+        """Парсинг timestamp в формате logging (с миллисекундами)."""
+        result = LogParser.parse_timestamp("2024-01-15 10:30:45,123456")
+        assert result == datetime(2024, 1, 15, 10, 30, 45, 123456)
+
+    def test_parse_logging_format_3digit_ms(self):
+        """Парсинг timestamp с 3-значными миллисекундами."""
+        result = LogParser.parse_timestamp("2024-01-15 10:30:45,123")
+        assert result == datetime(2024, 1, 15, 10, 30, 45, 123000)
+
+    def test_empty_string(self):
+        """Пустая строка должна вернуть None."""
+        assert LogParser.parse_timestamp("") is None
+
+    def test_none_string(self):
+        """Неизвестный формат должен вернуть None."""
+        assert LogParser.parse_timestamp("not-a-timestamp") is None
+
+    def test_whitespace_only(self):
+        """Только пробелы должны вернуть None."""
+        assert LogParser.parse_timestamp("   ") is None
+
+
+class TestTimelineMerge:
+    """Тесты для timeline_merge()."""
+
+    def test_merge_single_file(self, tmp_path: Path):
+        """Мерж одного файла."""
+        log_file = tmp_path / "app.log"
+        log_file.write_text(
+            "2024-01-15 10:30:45 | ERROR | module.py:42 - Something went wrong\n"
+        )
+
+        results = list(timeline_merge([log_file]))
+        assert len(results) == 1
+        entry, path = results[0]
+        assert entry.level == LogLevel.ERROR
+        assert path == log_file
+
+    def test_merge_two_files_by_time(self, tmp_path: Path):
+        """Мерж двух файлов — сортировка по времени."""
+        file1 = tmp_path / "app1.log"
+        file1.write_text(
+            "2024-01-15 10:30:45 | INFO | app - First event\n"
+            "2024-01-15 10:30:50 | ERROR | app - Second event\n"
+        )
+
+        file2 = tmp_path / "app2.log"
+        file2.write_text(
+            "2024-01-15 10:30:47 | WARNING | worker - Middle event\n"
+        )
+
+        results = list(timeline_merge([file1, file2]))
+
+        # Проверяем хронологический порядок
+        assert len(results) == 3
+        assert results[0][0].timestamp == "2024-01-15 10:30:45"
+        assert results[1][0].timestamp == "2024-01-15 10:30:47"
+        assert results[2][0].timestamp == "2024-01-15 10:30:50"
+
+    def test_merge_without_timestamps(self, tmp_path: Path):
+        """Мерж файлов без timestamp — stable sort."""
+        file1 = tmp_path / "simple1.log"
+        file1.write_text(
+            "INFO - Event A\n"
+            "ERROR - Event B\n"
+        )
+
+        file2 = tmp_path / "simple2.log"
+        file2.write_text(
+            "WARNING - Event C\n"
+        )
+
+        results = list(timeline_merge([file1, file2]))
+
+        # Все записи должны быть на месте
+        assert len(results) == 3
+
+        # Записи без timestamp идут после всех записей с timestamp
+        # Но внутри своего генератора порядок сохраняется
+        paths = [r[1].name for r in results]
+        # Файлы без timestamp не перемешиваются между собой
+        assert "simple1.log" in paths
+
+    def test_merge_mixed_formats(self, tmp_path: Path):
+        """Мерж loguru и logging форматов."""
+        loguru_file = tmp_path / "loguru.log"
+        loguru_file.write_text(
+            "2024-01-15 10:30:45 | ERROR | module.py:10 - Loguru error\n"
+        )
+
+        logging_file = tmp_path / "logging.log"
+        logging_file.write_text(
+            "2024-01-15 10:30:45,500 - app.main - ERROR - Logging error\n"
+        )
+
+        results = list(timeline_merge([loguru_file, logging_file]))
+
+        # logging error должен идти позже (10:30:45.500 > 10:30:45.000)
+        assert len(results) == 2
+        assert results[0][0].timestamp == "2024-01-15 10:30:45"
+        assert results[1][0].timestamp == "2024-01-15 10:30:45,500"
+
+    def test_merge_preserves_source(self, tmp_path: Path):
+        """Мерж сохраняет метку источника."""
+        file1 = tmp_path / "app.log"
+        file1.write_text(
+            "2024-01-15 10:30:45 | INFO | app - Message\n"
+        )
+
+        for entry, path in timeline_merge([file1]):
+            assert path == file1

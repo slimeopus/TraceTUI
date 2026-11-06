@@ -5,6 +5,7 @@ DataTable рендерит только видимые строки, что ус
 при больших объёмах логов (5000+ строк).
 """
 
+from datetime import datetime
 from textual.widgets import DataTable
 from textual.binding import Binding
 
@@ -47,6 +48,8 @@ class LogList(DataTable):
         self._testing: bool = False
         # Кэш RowKey для выбранной строки — нужен для перерисовки
         self._selected_row_key = None
+        # Режим merge mode — если True, используем timeline
+        self._merge_mode: bool = False
 
         # Ключевые слова для детекции аномалий
         self._anomaly_keywords = [
@@ -121,6 +124,12 @@ class LogList(DataTable):
     # Рендеринг строк (конвертация Rich-разметки в DataTable-стили)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _get_source_color(source_name: str) -> str:
+        """Генерирует цвет из хэша имени файла."""
+        colors = ["blue", "green", "yellow", "magenta", "cyan", "red", "white"]
+        return colors[hash(source_name) % len(colors)]
+
     def _build_line(self, entry: LogEntry, index: int) -> tuple[str, str, str, dict]:
         """Формирует строку и стили для DataTable.
 
@@ -137,9 +146,17 @@ class LogList(DataTable):
         # Формируем текст для каждого столбца БЕЗ Rich-разметки
         time_str = entry.timestamp if entry.timestamp else "    "
         level_text = f"{entry.level.icon} {entry.level.value}"
-        message = entry.message[:65]
-        if len(entry.message) > 65:
-            message += "..."
+
+        # В merge mode добавляем маркировку источника
+        message = entry.message
+        if self._merge_mode and entry.file_path:
+            color = self._get_source_color(entry.file_path)
+            # Обрезаем только текст сообщения до безопасной длины
+            truncated_msg = entry.message[:50] + "..." if len(entry.message) > 50 else entry.message
+            # Собираем строку: теги файла останутся целыми, а сообщение аккуратно влезет в экран
+            message = f"[{color}]{entry.file_path}[/{color}] {truncated_msg}"
+        else:
+            message = entry.message[:65] + "..." if len(entry.message) > 65 else entry.message
 
         # Стили для DataTable (CSS-строки)
         styles = {}
@@ -178,6 +195,9 @@ class LogList(DataTable):
 
         DataTable виртуализирует рендеринг — отображаются только видимые строки,
         что обеспечивает высокую производительность даже при 50000+ записях.
+
+        В merge mode используется плоский массив _entries (уже отсортированный
+        по времени). В обычном режиме — берётся активный источник.
         """
         self._ensure_columns()
         # В режиме тестов не пересчитываем _filtered_entries (тесты могут задать вручную)
@@ -249,8 +269,15 @@ class LogList(DataTable):
 
         Механизм ротации: при превышении MAX_ENTRIES удаляет старые записи
         с начала списка, чтобы предотвратить утечку памяти.
+
+        В merge mode используется Timsort для автоматической сортировки —
+        так как массив уже почти отсортирован, .sort() работает за O(n).
         """
         self._entries.extend(entries)
+
+        # В merge mode: используем Timsort для сортировки новых записей
+        if self._merge_mode:
+            self._entries.sort(key=lambda e: e.timestamp_dt or datetime.max)
 
         # Встречный сброс: обрезаем старые записи при превышении лимита
         trimmed = False
@@ -293,6 +320,12 @@ class LogList(DataTable):
     # Источники
     # ------------------------------------------------------------------
 
+    def set_merge_mode(self, merge_mode: bool) -> None:
+        """Включает/выключает режим таймлайна."""
+        self._merge_mode = merge_mode
+        self._selectedIndex = -1
+        self._update_display()
+
     def set_sources(self, sources: list[LogSource]) -> None:
         self._sources = sources
 
@@ -311,6 +344,9 @@ class LogList(DataTable):
 
     @current_source_index.setter
     def current_source_index(self, value: int) -> None:
+        # В merge mode переключение источника не меняет entries
+        if self._merge_mode:
+            return
         if not self._sources:
             return
         for source in self._sources:

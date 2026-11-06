@@ -64,6 +64,11 @@ class TraceTUIApp(App):
         padding: 1;
         overflow: auto;
     }
+
+    /* Стили для чекбоксов источников в merge mode */
+    SourcePanel.merge-mode {
+        background: $surface;
+    }
     """
 
     BINDINGS = [
@@ -71,6 +76,7 @@ class TraceTUIApp(App):
         Binding("f", "toggle_filter_mode", "Filter"),
         Binding("e", "next_error", "Next error"),
         Binding("t", "toggle_theme", "Theme"),
+        Binding("m", "toggle_merge_mode", "Timeline"),
         Binding("left", "switch_source_left", "Prev source"),
         Binding("right", "switch_source_right", "Next source"),
     ]
@@ -86,12 +92,16 @@ class TraceTUIApp(App):
         self._log_level: str | None = log_level
         # Live-мониторинг
         self._live_monitor: LiveMonitor | None = None
+        # Timeline merge mode
+        self.merge_mode: bool = False
+        # Индекс выбранного чекбокса в merge mode
+        self._selected_source_index: int = 0
 
     def on_mount(self) -> None:
         """Инициализация приложения."""
         self._sources: list[LogSource] = []
         self.title = "TraceTUI — Log Debugger"
-        self.sub_title = "↑↓ Navigate | ←→ Sources | F Filter | d Tag | E Next Error | T Theme | q Quit"
+        self.sub_title = "↑↓ Navigate | ←→ Sources | F Filter | d Tag | E Next Error | T Theme | m Timeline | q Quit"
 
         # Регистрируем светлую тему
         self.register_theme(
@@ -303,6 +313,78 @@ class TraceTUIApp(App):
         """Переход к следующей ошибке."""
         log_list = self.query_one("#log-list", LogList)
         log_list.action_next_error()
+
+    def action_toggle_merge_mode(self) -> None:
+        """Переключает режим таймлайна (merge mode)."""
+        self.merge_mode = not self.merge_mode
+        log_list = self.query_one("#log-list", LogList)
+
+        if self.merge_mode:
+            # Снимаем active flag у всех источников
+            for source in self._sources:
+                source.is_active = False
+                source.is_included = True  # Все включены по умолчанию
+            self._selected_source_index = 0
+            self.sub_title = "↑↓ Navigate | Space Toggle Source | ←→ Select | F Filter | E Next Error | T Theme | m Timeline | q Quit"
+            self.notify("Timeline mode ON — merge all sources")
+            # Синхронизируем merge mode с LogList
+            log_list.set_merge_mode(True)
+            # Перезапускаем таймлайн асинхронно
+            self.call_later(self._refresh_timeline_async)
+        else:
+            # Восстанавливаем активный источник — первый источник
+            if self._sources:
+                self._sources[0].is_active = True
+            self.sub_title = "↑↓ Navigate | ←→ Sources | F Filter | d Tag | E Next Error | T Theme | m Timeline | q Quit"
+            self.notify("Timeline mode OFF — single source view")
+            # Синхронизируем merge mode с LogList
+            log_list.set_merge_mode(False)
+
+    async def _refresh_timeline_async(self) -> None:
+        """Асинхронный запуск таймлайн-мержа в фоновом потоке."""
+        if not self.merge_mode:
+            return
+
+        entries = await asyncio.to_thread(self._build_timeline_sync)
+        self.call_after_refresh(self._apply_timeline_entries, entries)
+
+    def _build_timeline_sync(self) -> list:
+        """Синхронная функция для запуска в asyncio.to_thread.
+
+        Возвращает отфильтрованный список LogEntry из всех включённых источников.
+        """
+        from .parsers.log_parser import timeline_merge
+
+        # Собираем пути только включённых источников
+        included_sources = [s for s in self._sources if s.is_included]
+        if not included_sources:
+            return []
+
+        all_paths = [source.path for source in included_sources]
+
+        entries = []
+        for entry, path in timeline_merge(all_paths):
+            # Подменяем file_path на имя файла для маркировки
+            entry.file_path = path.name
+            entries.append(entry)
+
+        # Фильтруем по уровню
+        entries = self._filter_entries_by_level(entries)
+        return entries
+
+    def _clear_timeline(self) -> None:
+        """Очищает LogList в merge mode."""
+        log_list = self.query_one("#log-list", LogList)
+        log_list._entries = []
+        log_list._selectedIndex = -1
+        log_list._update_display()
+
+    def _apply_timeline_entries(self, entries: list) -> None:
+        """Применяет объединённые записи в LogList."""
+        log_list = self.query_one("#log-list", LogList)
+        log_list._entries = entries
+        log_list._selectedIndex = -1
+        log_list._update_display()
 
     def action_toggle_theme(self) -> None:
         """Переключает тему (светлая/тёмная)."""

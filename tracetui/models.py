@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 
 
 class LogLevel(Enum):
@@ -51,6 +52,7 @@ class LogEntry:
     traceback: str = ""
     tags: list[str] = field(default_factory=list)
     selected: bool = False
+    timestamp_dt: "datetime | None" = None
 
     @property
     def formatted_line(self) -> str:
@@ -79,6 +81,7 @@ class LogSource:
     entries: list[LogEntry] = field(default_factory=list)
     is_active: bool = False
     has_new: bool = False
+    is_included: bool = True  # Флаг для merge mode — включён ли в таймлайн
 
     @property
     def entry_count(self) -> int:

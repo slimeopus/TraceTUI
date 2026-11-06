@@ -1,6 +1,7 @@
 """Парсеры для различных форматов логов."""
 
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
@@ -30,6 +31,33 @@ class LogParser:
     _DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}")
 
     @staticmethod
+    def parse_timestamp(ts_str: str) -> datetime | None:
+        """Преобразует строку timestamp в datetime.
+
+        Поддерживаемые форматы:
+        - logging: "2024-01-15 10:30:45,123"
+        - loguru:  "2024-01-15 10:30:45"
+
+        Args:
+            ts_str: Строка timestamp из LogEntry.timestamp
+
+        Returns:
+            datetime объект или None, если строка пустая/неизвестного формата.
+        """
+        if not ts_str:
+            return None
+        # Попробуем с миллисекундами (logging format)
+        try:
+            return datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S,%f")
+        except ValueError:
+            pass
+        # Без миллисекунд (loguru format)
+        try:
+            return datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return None
+
+    @staticmethod
     def _looks_like_loguru(line: str) -> bool:
         """Проверяет, является ли строка форматом loguru (безопасно через split).
 
@@ -48,6 +76,28 @@ class LogParser:
         # Проверяем уровень
         level = parts[1].strip()
         return level in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+    @staticmethod
+    def _make_entry(
+        level: LogLevel,
+        message: str,
+        timestamp: str = "",
+        logger_name: str = "",
+        file_path: str = "",
+        line_number: int = 0,
+        traceback: str = "",
+    ) -> LogEntry:
+        """Создаёт LogEntry с заполненным timestamp_dt."""
+        return LogEntry(
+            level=level,
+            message=message,
+            timestamp=timestamp,
+            logger_name=logger_name,
+            file_path=file_path,
+            line_number=line_number,
+            traceback=traceback,
+            timestamp_dt=LogParser.parse_timestamp(timestamp) if timestamp else None,
+        )
 
     @staticmethod
     def detect_format(line: str) -> str:
@@ -134,14 +184,13 @@ class LogParser:
             # Это logger name (например, "app.services.auth")
             logger_name = source_part.split(".")[-1]
 
-        return LogEntry(
+        return cls._make_entry(
             level=level,
             message=message,
             timestamp=timestamp,
             logger_name=logger_name,
             file_path=file_path,
             line_number=line_number,
-            traceback="",
         )
 
     @classmethod
@@ -154,7 +203,7 @@ class LogParser:
         data = match.groupdict()
         level = LogLevel[data["level"]]
 
-        return LogEntry(
+        return cls._make_entry(
             level=level,
             message=data["message"],
             timestamp=data["timestamp"],
@@ -361,3 +410,58 @@ def load_log_source(path: Path, format_type: str = "auto") -> LogSource:
     source.entries = entries
 
     return source
+
+
+def timeline_merge(paths: list[Path]) -> Iterator[tuple[LogEntry, Path]]:
+    """Мержит логи из нескольких файлов по единому таймлайну.
+
+    Гарантии:
+    - Каждый LogEntry возвращается с меткой источника (Path файла).
+    - Traceback остаётся целым — parse_file уже склеивает многострочные
+      traceback в один LogEntry, так что heapq.merge оперирует готовыми
+      объектами.
+    - Записи без timestamp (simple формат, "сиротские" строки) получают
+      fallback: они идут в конце своего генератора, сохраняя относительный
+      порядок (stable sort).
+
+    Args:
+        paths: Список путей к файлам логов.
+
+    Yields:
+        Пары (LogEntry, Path) — запись и путь к файлу-источнику,
+        отсортированные по времени в хронологическом порядке.
+    """
+    import heapq
+
+    def _annotate(
+        gen: Iterator[LogEntry], path: Path
+    ) -> Iterator[tuple[LogEntry, Path]]:
+        """Оборачивает генератор, добавляя путь к каждому элементу."""
+        for entry in gen:
+            yield (entry, path)
+
+    # Создаём именованные генераторы для heapq.merge
+    generators = [
+        _annotate(LogParser.parse_file(path), path)
+        for path in paths
+    ]
+
+    # Ключ сравнения: (has_ts, dt)
+    # has_ts=0 для записей с timestamp, has_ts=1 для записей без
+    # Это гарантирует, что записи с timestamp идут раньше,
+    # а записи без timestamp сохраняют свой относительный порядок
+    def _sort_key(
+        item: tuple[LogEntry, Path],
+    ) -> tuple[int, datetime | None]:
+        entry, _ = item
+        dt = entry.timestamp_dt
+        if dt is not None:
+            return (0, dt)
+        else:
+            return (1, None)
+
+    # Unpack generators as separate arguments (heapq.merge expects *iterables)
+    merged = heapq.merge(*generators, key=_sort_key)
+
+    for item in merged:
+        yield item
