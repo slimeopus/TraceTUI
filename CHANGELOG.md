@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-11-06
+
+### Added
+- Timeline merge mode (`m` key) — cross-file event timeline using `heapq.merge`
+- Asynchronous timeline building via `asyncio.to_thread`
+- `LogEntry.timestamp_dt` — parsed datetime field for precise sorting
+- `LogParser.parse_timestamp()` — converts both loguru and logging datetime formats
+- `LogParser._make_entry()` — factory that fills `timestamp_dt` on parse
+- Source panel checkbox mode in merge mode with `Space` toggle, `←→` navigation
+- Color-coded source names in SourcePanel matching LogList
+- Source tag prefix (`[blue]app.log[/blue]`) in LogList merge mode messages
+- Timsort-based live merge — `LogList` auto-sorts new entries in merge mode
+- `LogSource.is_included` flag — selective file inclusion in timeline
+- New version badge on README
+
+### Changed
+- `LogEntry` now carries `timestamp_dt: datetime | None` for O(1) comparison in merge
+- `traceback` entries are no longer re-parsed — `heapq.merge` operates on already-assembled objects
+
 ## [1.0.0] - 2026-11-05
 
 ### Added

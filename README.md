@@ -5,7 +5,7 @@
 ![Tests](https://github.com/slimeopus/TraceTUI/actions/workflows/tests.yml/badge.svg)
 ![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![License](https://img.shields.io/github/license/slimeopus/TraceTUI)
-![Version](https://img.shields.io/badge/version-1.0.0-34C4C4.svg?style=flat)
+![Version](https://img.shields.io/badge/version-2.0.0-34C4C4.svg?style=flat)
 
 ![Preview](.github/assets/preview.png)
 
@@ -45,6 +45,7 @@
 - Добавление пользовательских меток (тегов)
 - Фильтрация по уровню и тексту
 - Поддержка нескольких файлов логов одновременно
+- **Timeline Merge Mode** (`m`) — сквозной таймлайн из нескольких файлов с цветовой маркировкой источников
 
 ## 📦 Установка
 
@@ -79,6 +80,9 @@ tracetui log1.log log2.log log3.log
 # С указанием формата
 tracetui -f loguru my_app.log
 tracetui -f logging server.log
+
+# Несколько файлов (режим timeline — нажмите m в UI)
+tracetui app.log worker.log scheduler.log
 
 # Фильтрация по уровню
 tracetui -l ERROR app.log
