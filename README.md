@@ -1,6 +1,11 @@
 # TraceTUI
 
-**Интерактивный TUI-дебаггер для логов** — красивый консольный интерфейс на базе [Textual](https://textual.io/), который парсит логи (`loguru`, `logging`) в реальном времени, подсвечивает ошибки и позволяет фильтровать их стрелками.
+<p align="left">
+  <a href="./README.md">🇺🇸 English</a> • 
+  <a href="./README.ru.md">🇷🇺 Русский</a>
+</p>
+
+**Interactive TUI debugger for logs** — a beautiful console interface built on [Textual](https://textual.io/) that parses logs (`loguru`, `logging`) in real-time, highlights errors, and lets you filter them with arrow keys.
 
 ![Tests](https://github.com/slimeopus/TraceTUI/actions/workflows/tests.yml/badge.svg)
 ![Python Version](https://img.shields.io/badge/python-3.10+-blue.svg)
@@ -9,86 +14,86 @@
 
 ![Preview](.github/assets/preview.png)
 
-## ✨ Возможности
+## ✨ Features
 
-### Трёхпанельный интерфейс
-- **Левая панель** — список источников/файлов логов с индикаторами активности
-- **Центральная панель** — поток логов с цветовой кодировкой уровней
-- **Правая панель** — детали выбранной строки (traceback, метаданные, теги)
+### Three-panel interface
+- **Left panel** — list of log sources/files with activity indicators
+- **Center panel** — log stream with color-coded severity levels
+- **Right panel** — selected entry details (traceback, metadata, tags)
 
-### Форматы логов
-- **loguru** — `2024-01-15 10:30:45 \| ERROR \| module.py:42 - message`
+### Log formats
+- **loguru** — `2024-01-15 10:30:45 | ERROR | module.py:42 - message`
 - **logging** — `2024-01-15 10:30:45,123 - module.name - ERROR - message`
 - **Simple** — `ERROR - message`
-- **Auto-detect** — автоматическое определение формата
+- **Auto-detect** — automatic format detection
 
-### Навигация и управление
+### Navigation & Control
 
-#### Движение по логам
-- `↑` / `↓` — навигация по логам (по строкам)
-- Блоки ошибок подсвечиваются при наведении
+#### Log navigation
+- `↑` / `↓` — navigate through logs (by line)
+- Error blocks are highlighted on hover
 
-#### Переключение источников
-- `←` / `→` — переключение между источниками/файлами логов
-- Активный источник отмечен маркером `▸` в левой панели
+#### Source switching
+- `←` / `→` — switch between sources/log files
+- Active source is marked with `▸` in the left panel
 
-#### Горячие клавиши
-| Клавиша | Действие | Описание |
-|---------|----------|----------|
-| `F` | Filter | Режим фильтрации — введите текст для поиска |
-| `E` | Next Error | Переход к следующей ошибке (пропуск INFO/DEBUG) |
-| `T` | Theme | Переключение темы (светлая/тёмная) |
-| `Q` | Quit | Выход из приложения |
+#### Keyboard shortcuts
+| Key | Action | Description |
+|-----|--------|-------------|
+| `F` | Filter | Filter mode — type text to search |
+| `E` | Next Error | Jump to next error (skip INFO/DEBUG) |
+| `T` | Theme | Switch theme (light/dark) |
+| `Q` | Quit | Exit the application |
 
-#### Дополнительные возможности
-- Копирование traceback в буфер обмена
-- Добавление пользовательских меток (тегов)
-- Фильтрация по уровню и тексту
-- Поддержка нескольких файлов логов одновременно
-- **Timeline Merge Mode** (`m`) — сквозной таймлайн из нескольких файлов с цветовой маркировкой источников
+#### Additional capabilities
+- Copy traceback to clipboard
+- Add custom tags (labels)
+- Filter by level and text
+- Multiple log file support
+- **Timeline Merge Mode** (`m`) — cross-file event timeline with color-coded source tags
 
-## 📦 Установка
+## 📦 Installation
 
-### Через pip
+### Via pip
 ```bash
 pip install tracetui
 ```
 
-### Из исходников
+### From source
 ```bash
 git clone <repository-url>
 cd TraceTUI
 pip install -e .
 ```
 
-### Зависимости
+### Dependencies
 - Python >= 3.10
 - textual >= 1.0.0
 - rich >= 13.0.0
 
-## 🚀 Использование
+## 🚀 Usage
 
-### Быстрый старт
+### Quick start
 ```bash
-# Запуск с примерами
+# Run with sample logs
 tracetui sample_logs/app_standard.log
 tracetui sample_logs/app_loguru.log
 
-# Несколько файлов
+# Multiple files
 tracetui log1.log log2.log log3.log
 
-# С указанием формата
+# With format specification
 tracetui -f loguru my_app.log
 tracetui -f logging server.log
 
-# Несколько файлов (режим timeline — нажмите m в UI)
+# Multiple files (timeline mode — press m in UI)
 tracetui app.log worker.log scheduler.log
 
-# Фильтрация по уровню
+# Filter by level
 tracetui -l ERROR app.log
 ```
 
-### Программное использование
+### Programmatic usage
 ```python
 from tracetui.app import TraceTUIApp
 from tracetui.parsers.log_parser import load_log_source
@@ -96,47 +101,47 @@ from pathlib import Path
 
 app = TraceTUIApp()
 
-# Загрузка файла
+# Load a file
 source = load_log_source(Path("app.log"))
 app.add_log_source(source)
 
-# Запуск
+# Run
 app.run()
 ```
 
-## 🧪 Тестирование
+## 🧪 Testing
 
 ```bash
-# Запуск всех тестов
+# Run all tests
 pytest
 
-# С отчетом
+# With verbose output
 pytest -v
 
-# С покрытием
+# With coverage
 pytest --cov=tracetui --cov-report=html
 ```
 
-## 📝 Примеры использования
+## 📝 Usage examples
 
-### Отладка приложения с множеством ошибок
+### Debugging an app with many errors
 ```bash
-# Открываем лог с автоопределением формата
+# Open a log with auto-detect format
 tracetui /var/log/myapp.log
 
-# Перемещаемся стрелками до ERROR
-# Нажимаем Enter для просмотра деталей
-# Смотрим traceback в правой панели
-# Нажимаем 'd' чтобы пометить как "исследовать"
+# Navigate with arrows to ERROR
+# Press Enter to view details
+# Check the traceback in the right panel
+# Press 'd' to mark as "investigate"
 ```
 
-### Мониторинг нескольких файлов
+### Monitoring multiple files
 ```bash
-# Открываем несколько логов одновременно
+# Open several logs simultaneously
 tracetui app.log worker.log scheduler.log
 ```
 
-## 📄 Лицензия
+## 📄 License
 
 MIT
 
